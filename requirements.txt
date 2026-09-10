@@ -1,0 +1,4 @@
+selenium>=4.15
+beautifulsoup4>=4.12
+pydantic>=2.0
+pydantic-settings>=2.0
