@@ -1,0 +1,87 @@
+name: Surveillance logement CROUS Rennes
+
+on:
+  # Toutes les 15 min. Attention : GitHub ne garantit PAS la ponctualité des
+  # schedules (retards fréquents de 5 à 20 min, exécutions parfois sautées).
+  schedule:
+    - cron: "*/15 * * * *"
+  # Permet de lancer le workflow à la main depuis l'onglet Actions (pour tester).
+  workflow_dispatch:
+
+# Un seul run à la fois : deux runs concurrents recommiteraient chacun leur
+# version de seen_ids.json, et le second push serait rejeté (non fast-forward).
+concurrency:
+  group: crous-watch
+  cancel-in-progress: false
+
+permissions:
+  contents: write # nécessaire pour recommiter seen_ids.json dans le repo
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # garde-fou : un Selenium bloqué ne doit pas tourner 6 h
+
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Installer Chrome + chromedriver
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+          install-chromedriver: true
+
+      - name: Installer les dépendances Python
+        run: pip install -r requirements.txt
+
+      - name: Lancer le script de surveillance
+        env:
+          # Transmis à Selenium via main.py (chrome_options.binary_location)
+          CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
+          # Les 6 secrets du repo -> variables d'environnement lues par Settings (pydantic)
+          MSE_EMAIL: ${{ secrets.MSE_EMAIL }}
+          MSE_PASSWORD: ${{ secrets.MSE_PASSWORD }}
+          SEARCH_URL: ${{ secrets.SEARCH_URL }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          NOTIFY_EMAIL_TO: ${{ secrets.NOTIFY_EMAIL_TO }}
+        run: python main.py
+
+      - name: Publier les infos de debug en cas d'échec
+        # dump_debug_info() écrit debug/*.png|html|txt quand le login ou le
+        # parsing casse. Sans cette étape, ces fichiers meurent avec le runner
+        # et tu dois deviner ce qui a changé sur le site du CROUS.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-${{ github.run_id }}
+          path: debug/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Recommiter seen_ids.json
+        # Uniquement si le script a réussi : en cas d'échec, le state n'a pas
+        # été mis à jour et il n'y a rien à committer.
+        if: success()
+        run: |
+          if git diff --quiet -- seen_ids.json; then
+            echo "Aucune nouvelle annonce mémorisée, rien à committer."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add seen_ids.json
+          # [skip ci] est ici une ceinture de sécurité : les commits poussés
+          # avec GITHUB_TOKEN ne redéclenchent de toute façon pas les workflows.
+          git commit -m "chore: mise à jour de seen_ids.json [skip ci]"
+          # Rebase avant push au cas où un autre commit serait arrivé entre-temps.
+          git pull --rebase --autostash origin ${{ github.ref_name }}
+          git push origin HEAD:${{ github.ref_name }}
