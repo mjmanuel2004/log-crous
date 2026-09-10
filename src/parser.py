@@ -6,7 +6,11 @@ from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 from pydantic import HttpUrl
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.chrome.webdriver import WebDriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
 from src.models import Accommodation, SearchResults
 
@@ -27,10 +31,23 @@ class Parser:
     def __init__(self, authenticated_driver: WebDriver):
         self.driver = authenticated_driver
 
+    # Deux signaux possibles que la SPA a fini de rendre : au moins une carte
+    # d'annonce, ou le titre de résultats (présent même quand il n'y a aucune
+    # annonce, avec le texte "Aucun...").
+    RESULTS_LOCATOR = (By.CSS_SELECTOR, ".fr-card, .SearchResults-desktop")
+
     def get_accommodations(self, search_url: str) -> SearchResults:
         logger.info(f"Récupération des annonces pour : {search_url}")
-        self.driver.get(str(search_url))
-        sleep(3)  # laisser le temps au JS de charger les résultats
+        try:
+            self.driver.get(str(search_url))
+        except TimeoutException:
+            # Le DOM est peut-être déjà exploitable malgré le timeout : on tente
+            # le parsing plutôt que d'abandonner le run.
+            logger.warning(
+                "Timeout au chargement de la page de recherche, on tente quand même"
+            )
+        self._wait_for_results()
+        logger.info(f"URL de la page parsée : {self.driver.current_url}")
         html = self.driver.page_source
         soup = BeautifulSoup(html, "html.parser")
 
@@ -42,6 +59,29 @@ class Parser:
             count=num_accommodations,
             accommodations=parse_accommodations_summaries(soup),
         )
+
+    def _wait_for_results(self, timeout: int = 30) -> None:
+        """Attend que le JS ait réellement injecté les résultats dans le DOM.
+
+        Avec page_load_strategy="eager", driver.get() rend la main dès que le
+        HTML est parsé, avant que la SPA n'ait rendu quoi que ce soit. Un
+        sleep(3) fixe serait un pari : trop court on parse une page vide et on
+        conclut "0 annonce" à tort, trop long on ralentit chaque run pour rien.
+        On attend donc un signal réel du DOM, avec un plafond.
+        """
+        try:
+            WebDriverWait(self.driver, timeout).until(
+                EC.presence_of_element_located(self.RESULTS_LOCATOR)
+            )
+            logger.info("Résultats rendus par la SPA")
+        except TimeoutException:
+            logger.warning(
+                f"Aucun résultat rendu après {timeout}s. Soit la session n'est "
+                f"pas authentifiée, soit la structure du site a changé."
+            )
+        # Petite marge : les cartes suivantes peuvent encore être en cours de
+        # rendu au moment où la première apparaît.
+        sleep(1)
 
     def _get_accommodations_count(self, soup: BeautifulSoup) -> Optional[int]:
         results_heading = soup.find(

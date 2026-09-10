@@ -43,6 +43,10 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Lancer le script de surveillance
+        # Timeout au niveau du STEP, pas seulement du job : si le job entier
+        # est tué, les steps suivants ne tournent pas et on perd les artefacts
+        # de debug. Ici, le step échoue proprement et la suite s'exécute.
+        timeout-minutes: 6
         env:
           # Transmis à Selenium via main.py (chrome_options.binary_location)
           CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
@@ -55,11 +59,13 @@ jobs:
           NOTIFY_EMAIL_TO: ${{ secrets.NOTIFY_EMAIL_TO }}
         run: python main.py
 
-      - name: Publier les infos de debug en cas d'échec
+      - name: Publier les infos de debug
         # dump_debug_info() écrit debug/*.png|html|txt quand le login ou le
         # parsing casse. Sans cette étape, ces fichiers meurent avec le runner
         # et tu dois deviner ce qui a changé sur le site du CROUS.
-        if: failure()
+        # always() et pas failure() : certaines captures (rules_page) sont
+        # produites lors de runs qui « réussissent » mais partent de travers.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: debug-${{ github.run_id }}

@@ -28,6 +28,16 @@ def create_driver(headless: bool = True) -> WebDriver:
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--window-size=1920,1080")
 
+    # pageLoadStrategy par défaut = "normal" : chromedriver garde la commande
+    # GET ouverte jusqu'à l'événement `load` COMPLET (images, iframes, scripts
+    # tiers, tuiles de carte...) et ignore toute autre commande entre-temps.
+    # Une seule sous-ressource qui ne répond pas fige alors le driver entier
+    # — c'est ce qui bloquait 4 min sur /tools/36/rules.
+    # "eager" rend la main dès DOMContentLoaded : le DOM est disponible, les
+    # ressources tierces lentes n'ont plus de prise sur nous. En contrepartie,
+    # le contenu injecté par le JS doit être attendu explicitement (cf. parser).
+    chrome_options.page_load_strategy = "eager"
+
     # Si CHROME_PATH est défini (ex: fourni par browser-actions/setup-chrome
     # dans le workflow GitHub Actions), on l'indique explicitement à Selenium.
     # Sans ça, Selenium Manager peut ne pas trouver le binaire Chrome installé
@@ -37,7 +47,16 @@ def create_driver(headless: bool = True) -> WebDriver:
         logger.info(f"Utilisation du binaire Chrome explicite : {chrome_path}")
         chrome_options.binary_location = chrome_path
 
-    return webdriver.Chrome(options=chrome_options)
+    driver = webdriver.Chrome(options=chrome_options)
+
+    # Sans ces timeouts, un driver.get() sur une page qui ne finit jamais de
+    # charger (redirection en boucle, ressource bloquée) attend 300 s par
+    # défaut, sans le moindre log. Le job GitHub Actions est alors tué de
+    # l'extérieur avant que le code n'ait pu capturer la moindre info de debug.
+    driver.set_page_load_timeout(45)
+    driver.set_script_timeout(30)
+
+    return driver
 
 
 def main() -> None:
@@ -56,6 +75,15 @@ def main() -> None:
         except Exception as e:
             dump_debug_info(driver, "parsing_failure")
             raise
+
+        # Zéro annonce est ambigu : soit la recherche ne renvoie vraiment rien,
+        # soit la session n'est pas authentifiée / le parsing a cassé. On
+        # capture la page pour pouvoir trancher a posteriori.
+        if not search_results.accommodations:
+            logger.warning(
+                "Aucune annonce parsée sur la page — capture de debug enregistrée"
+            )
+            dump_debug_info(driver, "no_accommodations")
 
         current_ids = {
             acc.id for acc in search_results.accommodations if acc.id is not None

@@ -153,27 +153,65 @@ class Authenticator:
             password_input.send_keys(Keys.RETURN)
         self._wait_for_page_ready(driver)
 
+        # 3bis. Vérifier que le login a effectivement abouti. Sans ce contrôle,
+        #       un mot de passe refusé ou un altcha non validé passe inaperçu :
+        #       on enchaîne sur la suite et l'échec apparaît beaucoup plus loin,
+        #       sous une forme incompréhensible.
+        logger.info(f"URL après validation du formulaire : {driver.current_url}")
+        if "login" in driver.current_url:
+            dump_debug_info(driver, "login_not_completed")
+            logger.warning(
+                "Toujours sur une URL de login après soumission du formulaire : "
+                "identifiants refusés, altcha non validé, ou étape supplémentaire. "
+                "Voir debug/login_not_completed.*"
+            )
+
         # 4. Valider le règlement (obligatoire avant d'accéder à la recherche,
         #    seulement lors de la toute première connexion)
         self._validate_rules(driver)
 
         # 5. Forcer la mise à jour du statut de connexion
-        driver.get("https://trouverunlogement.lescrous.fr/mse/discovery/connect")
+        logger.info("Synchronisation du statut de connexion (mse/discovery/connect)")
+        try:
+            driver.get("https://trouverunlogement.lescrous.fr/mse/discovery/connect")
+        except TimeoutException:
+            logger.warning("Timeout sur mse/discovery/connect, on poursuit quand même")
         self._wait_for_page_ready(driver)
 
-        logger.info("Authentification réussie")
+        logger.info(f"Authentification terminée, URL finale : {driver.current_url}")
+
+    RULES_URL = "https://trouverunlogement.lescrous.fr/tools/36/rules"
 
     def _validate_rules(self, driver: WebDriver) -> None:
-        logger.info("Vérification du règlement du site")
-        driver.get("https://trouverunlogement.lescrous.fr/tools/36/rules")
+        logger.info(f"Vérification du règlement du site : {self.RULES_URL}")
+        try:
+            driver.get(self.RULES_URL)
+        except TimeoutException:
+            # On ne fait pas échouer tout le run ici : la page de règlement est
+            # facultative si elle a déjà été acceptée une fois. On trace et on
+            # continue, le parsing dira si l'accès aux annonces fonctionne.
+            logger.warning(
+                "Timeout au chargement de la page de règlement, on poursuit quand même"
+            )
         self._wait_for_page_ready(driver)
+        logger.info(f"URL après chargement du règlement : {driver.current_url}")
 
         validate_button = self._find_first(driver, [(By.NAME, "searchSubmit")])
         if validate_button:
-            validate_button.click()
+            logger.info("Bouton de validation du règlement trouvé, clic")
+            # Clic JS plutôt que natif : le clic natif de Selenium échoue si
+            # l'élément est hors viewport ou recouvert (bandeau cookies), et
+            # attend le rechargement complet de la page. Le reste du fichier
+            # utilise déjà cette approche.
+            driver.execute_script("arguments[0].click();", validate_button)
             self._wait_for_page_ready(driver)
+            logger.info(f"Règlement validé, URL courante : {driver.current_url}")
         else:
-            logger.info("Pas de règlement à valider (déjà fait, ou page différente)")
+            # Cas normal si le règlement a déjà été accepté, mais c'est aussi le
+            # symptôme d'une redirection inattendue : on capture la page pour
+            # pouvoir trancher au lieu de deviner.
+            logger.info("Pas de bouton de règlement sur cette page")
+            dump_debug_info(driver, "rules_page")
 
     def _find_first(
         self,
