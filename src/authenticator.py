@@ -48,7 +48,11 @@ def dump_debug_info(driver: WebDriver, label: str) -> None:
         html_path.write_text(driver.page_source, encoding="utf-8")
         url_path.write_text(driver.current_url, encoding="utf-8")
 
-        logger.error(f"Debug sauvegardé : {screenshot_path}, {html_path}, {url_path}")
+        logger.error(
+            f"Debug sauvegardé : {screenshot_path}, {html_path}, {url_path} "
+            f"| titre de la page : {driver.title!r} "
+            f"| taille du HTML : {len(driver.page_source)} caractères"
+        )
     except Exception as dump_error:
         logger.error(f"Impossible de sauvegarder les infos de debug : {dump_error}")
 
@@ -166,9 +170,14 @@ class Authenticator:
                 "Voir debug/login_not_completed.*"
             )
 
-        # 4. Valider le règlement (obligatoire avant d'accéder à la recherche,
-        #    seulement lors de la toute première connexion)
-        self._validate_rules(driver)
+        # 4. Valider le règlement, uniquement si explicitement demandé.
+        #    Charger cette page laisse le navigateur incapable de naviguer
+        #    ailleurs (toute navigation suivante timeoute sans changer d'URL),
+        #    donc on ne la touche plus par défaut.
+        if settings.VALIDATE_RULES:
+            self._validate_rules(driver)
+        else:
+            logger.info("Étape règlement désactivée (VALIDATE_RULES=false)")
 
         # 5. Forcer la mise à jour du statut de connexion
         logger.info("Synchronisation du statut de connexion (mse/discovery/connect)")

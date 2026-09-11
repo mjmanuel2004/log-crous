@@ -29,5 +29,12 @@ class Settings(BaseSettings):
     GMAIL_APP_PASSWORD: str = Field(default=...)  # mot de passe d'application, pas le mot de passe du compte
     NOTIFY_EMAIL_TO: str = Field(default=...)  # peut être la même adresse que GMAIL_ADDRESS
 
+    # -- Étape de validation du règlement --
+    # Désactivée par défaut : cette page semble bloquer toute navigation
+    # ultérieure du navigateur (voir l'analyse dans le README). Le règlement
+    # n'a de toute façon à être accepté qu'une seule fois, manuellement, dans
+    # un vrai navigateur. Passer VALIDATE_RULES=true pour la réactiver.
+    VALIDATE_RULES: bool = False
+
     # -- Fichier de state (IDs d'annonces déjà notifiées) --
     STATE_FILE: str = "seen_ids.json"

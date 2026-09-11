@@ -42,6 +42,26 @@ jobs:
       - name: Installer les dépendances Python
         run: pip install -r requirements.txt
 
+      - name: Tester l'accès réseau au site du CROUS
+        # Test discriminant : si ces requêtes HTTP brutes répondent vite, le
+        # domaine est joignable depuis le runner et le blocage vient du
+        # navigateur (page qui fige Chrome). Si elles pendent ou renvoient
+        # 403/503, c'est le site qui filtre l'IP GitHub Actions et aucun
+        # correctif côté Selenium n'y changera quoi que ce soit.
+        # continue-on-error : ce step informe, il ne doit pas bloquer le run.
+        continue-on-error: true
+        run: |
+          for url in \
+            "https://trouverunlogement.lescrous.fr/" \
+            "https://trouverunlogement.lescrous.fr/tools/36/rules" \
+            "https://trouverunlogement.lescrous.fr/tools/47/search"
+          do
+            echo "--- $url"
+            curl -sS -o /dev/null --max-time 20 \
+                 -w 'code=%{http_code} temps=%{time_total}s taille=%{size_download}o\n' \
+                 "$url" || echo "ECHEC (timeout ou connexion refusée)"
+          done
+
       - name: Lancer le script de surveillance
         # Timeout au niveau du STEP, pas seulement du job : si le job entier
         # est tué, les steps suivants ne tournent pas et on perd les artefacts
